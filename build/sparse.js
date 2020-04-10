@@ -41,19 +41,47 @@ async function geoJsonFiles() {
  * @param {*} filePath 文件路径
  */
 const sparse = (filePath) => {
-  const json = require(filePath);
-  const { features: [{ geometry: { coordinates } }] } = json;
+  let json;
+  try {
+    json = require(filePath);
+  } catch (error) {
+    logger.error(filePath, 'failed');
+    return;
+  }
   _.each(MaxHeight, (maxHeight) => {
-    const resultCoorinates = [];
     const resultFilePath = filePath.replace(/\.geo\.json/g, `.sparse.${maxHeight}.geo.json`);
-    coordinates
-      .filter(item => item[0].length > 100) // 过滤100个点以上的块
-      .forEach((item) => { // 依次抽稀坐标块
-        const pointsArray = item[0];
-        const result = douglasPeucker(pointsArray, maxHeight); // 抽稀
-        resultCoorinates.push([result]);
-      });
-    json.features[0].geometry.coordinates = resultCoorinates;
+    let resultCoorinates = [];
+
+    function handleBlock(block) {
+      const pointsArray = block[0];
+      if (pointsArray.length > 100) {
+        const result = douglasPeucker(pointsArray, maxHeight);
+        return [result];
+      }
+      return block;
+    }
+
+    let geometry;
+    if (json.type === 'FeatureCollection') {
+      // eslint-disable-next-line prefer-destructuring
+      geometry = json.features[0].geometry;
+    } else if (json.type === 'Feature') {
+      // eslint-disable-next-line prefer-destructuring
+      geometry = json.geometry;
+    } else {
+      logger.log('other json type');
+      return;
+    }
+    if (geometry.type === 'MultiPolygon') {
+      resultCoorinates = geometry.coordinates.map(handleBlock);
+    } else if (geometry.type === 'Polygon') {
+      resultCoorinates = handleBlock(geometry.coordinates);
+    } else {
+      logger.log('other geometry type');
+      return;
+    }
+
+    geometry.coordinates = resultCoorinates;
     fs.writeFileSync(resultFilePath, JSON.stringify(json));
   });
   logger.info(`    √ 抽稀 - ${filePath} - 完成`);
